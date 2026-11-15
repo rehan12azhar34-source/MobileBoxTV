@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var rootService: IRootDisplayService? = null
+    private var isRootShell = false
     private var localVirtualDisplay: VirtualDisplay? = null
     private var virtualDisplayId: Int = -1
     private var currentSurface: Surface? = null
@@ -64,6 +65,8 @@ class MainActivity : AppCompatActivity() {
 
     private var cursorX = 270f
     private var cursorY = 480f
+    private var dragStartX = 270f
+    private var dragStartY = 480f
     private var isDragging = false
     private var dragDownTime = 0L
 
@@ -88,7 +91,6 @@ class MainActivity : AppCompatActivity() {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             try {
                 rootService = IRootDisplayService.Stub.asInterface(service)
-                statusText.text = "Root Ready"
                 createOrResizeVirtualDisplay()
             } catch (t: Throwable) {
                 showError("Service connected error: ${t.message}")
@@ -97,8 +99,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             rootService = null
-            virtualDisplayId = -1
-            handler.post { statusText.text = "Root Disconnected" }
+            handler.post { updateStatusReady() }
         }
     }
 
@@ -123,6 +124,19 @@ class MainActivity : AppCompatActivity() {
             hudBanner.text = msg
         } catch (_: Throwable) {
         }
+    }
+
+    private fun updateStatusReady() {
+        val mode = when {
+            rootService != null -> "Root IPC Ready"
+            isRootShell -> "Root Shell Ready"
+            else -> "Waiting Root"
+        }
+        statusText.text = if (virtualDisplayId >= 0) "$mode • Display #$virtualDisplayId" else mode
+        statusText.setTextColor(
+            if (rootService != null || isRootShell) Color.parseColor("#6EE7B7")
+            else Color.parseColor("#FBBF24")
+        )
     }
 
     private fun buildUi() {
@@ -183,12 +197,7 @@ class MainActivity : AppCompatActivity() {
 
         val vBackBtn = makeMenuButton("Send Mobile Back") {
             if (virtualDisplayId >= 0) {
-                Thread {
-                    try {
-                        rootService?.injectBackKey(virtualDisplayId)
-                    } catch (_: Throwable) {
-                    }
-                }.start()
+                sendBack(virtualDisplayId)
             }
         }
 
@@ -356,15 +365,21 @@ class MainActivity : AppCompatActivity() {
     private fun bindRootDaemon() {
         try {
             Shell.getShell { shell ->
+                isRootShell = shell.isRoot
                 if (!shell.isRoot) {
-                    showError("Root Denied! Grant su permission.")
+                    Thread {
+                        val diag = Shell.cmd("id; which su; ls /system/xbin/su /system/bin/su 2>/dev/null").exec()
+                        val msg = (diag.out + diag.err).joinToString(" | ")
+                        handler.post { showError("No Root (su): $msg") }
+                    }.start()
                     return@getShell
                 }
+
+                updateStatusReady()
                 try {
                     val intent = Intent(this, RootDisplayService::class.java)
                     RootService.bind(intent, serviceConn)
-                } catch (t: Throwable) {
-                    showError("RootService bind error: ${t.message}")
+                } catch (_: Throwable) {
                 }
             }
         } catch (t: Throwable) {
@@ -390,20 +405,14 @@ class MainActivity : AppCompatActivity() {
                 handler.post {
                     releaseLocalDisplay()
                     virtualDisplayId = id
-                    statusText.text = "Root Ready • Display #$id"
-                    statusText.setTextColor(Color.parseColor("#6EE7B7"))
+                    updateStatusReady()
                 }
             } else {
                 handler.post {
                     val localId = createLocalVirtualDisplay(surf)
                     virtualDisplayId = localId
                     if (localId >= 0) {
-                        statusText.text = if (svc != null) {
-                            "Root Ready • Local Display #$localId"
-                        } else {
-                            "Waiting Root • Display #$localId"
-                        }
-                        statusText.setTextColor(Color.parseColor("#6EE7B7"))
+                        updateStatusReady()
                     } else {
                         showError("Failed creating VirtualDisplay")
                     }
@@ -472,15 +481,57 @@ class MainActivity : AppCompatActivity() {
                 }
                 val dId = virtualDisplayId
                 Thread {
-                    try {
-                        rootService?.launchAppOnDisplay(app.packageName, dId)
-                    } catch (t: Throwable) {
-                        handler.post { showError("Launch error: ${t.message}") }
-                    }
+                    launchAppCompat(app.packageName, dId)
                 }.start()
                 enterScreenControl()
             })
         }
+    }
+
+    private fun launchAppCompat(pkg: String, dId: Int) {
+        val svc = rootService
+        if (svc != null) {
+            try {
+                svc.launchAppOnDisplay(pkg, dId)
+                return
+            } catch (_: Throwable) {
+            }
+        }
+        if (!isRootShell) {
+            handler.post { showError("Need Root to launch on Display #$dId") }
+            return
+        }
+        grantPermissionsViaShell(pkg)
+        val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+        val component = launchIntent?.component
+        val res = if (component != null) {
+            Shell.cmd(
+                "am start --display $dId -a android.intent.action.MAIN " +
+                    "-c android.intent.category.LAUNCHER " +
+                    "-f 0x10200000 -n ${component.flattenToString()}"
+            ).exec()
+        } else {
+            Shell.cmd("monkey -p $pkg -c android.intent.category.LAUNCHER 1").exec()
+        }
+        if (!res.isSuccess) {
+            val err = (res.out + res.err).joinToString(" ")
+            handler.post { showError("Launch: $err") }
+        }
+    }
+
+    private fun grantPermissionsViaShell(pkg: String) {
+        val perms = listOf(
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.WRITE_EXTERNAL_STORAGE",
+            "android.permission.CAMERA",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.POST_NOTIFICATIONS"
+        )
+        val cmds = perms.map { "pm grant $pkg $it 2>/dev/null" }.toMutableList()
+        cmds.add("appops set $pkg SYSTEM_ALERT_WINDOW allow 2>/dev/null")
+        Shell.cmd(*cmds.toTypedArray()).exec()
     }
 
     private fun installPickedApk(uri: Uri) {
@@ -491,18 +542,49 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(outFile).use { output -> input.copyTo(output) }
                 }
-                val result = rootService?.installApkAndGrant(outFile.absolutePath)
-                    ?: "ERR: Root service not connected"
+
+                val result = if (rootService != null) {
+                    rootService!!.installApkAndGrant(outFile.absolutePath)
+                } else if (isRootShell) {
+                    val safePath = outFile.absolutePath.replace("\"", "\\\"")
+                    val res = Shell.cmd("pm install -r -g \"$safePath\"").exec()
+                    val out = (res.out + res.err).joinToString("\n").trim()
+                    if (res.isSuccess) "OK: $out" else "ERR: $out"
+                } else {
+                    "ERR: Root shell not available"
+                }
+
                 outFile.delete()
                 handler.post {
                     Toast.makeText(this, result, Toast.LENGTH_LONG).show()
-                    statusText.text = if (result.startsWith("OK")) "APK Installed!" else result
+                    if (result.startsWith("OK")) {
+                        statusText.text = "APK Installed!"
+                        statusText.setTextColor(Color.parseColor("#6EE7B7"))
+                    } else {
+                        showError(result)
+                    }
                     refreshInstalledApps()
                 }
             } catch (e: Throwable) {
                 handler.post {
                     showError("Install error: ${e.message}")
                 }
+            }
+        }.start()
+    }
+
+    private fun sendBack(dId: Int) {
+        Thread {
+            val svc = rootService
+            if (svc != null) {
+                try {
+                    svc.injectBackKey(dId)
+                    return@Thread
+                } catch (_: Throwable) {
+                }
+            }
+            if (isRootShell) {
+                Shell.cmd("input -d $dId keyevent 4").exec()
             }
         }.start()
     }
@@ -576,7 +658,7 @@ class MainActivity : AppCompatActivity() {
                         exitScreenControl()
                     } else {
                         lastBackPressMs = now
-                        Thread { rootService?.injectBackKey(virtualDisplayId) }.start()
+                        sendBack(virtualDisplayId)
                     }
                     return true
                 }
@@ -620,12 +702,19 @@ class MainActivity : AppCompatActivity() {
                     if (event.repeatCount == 0 && !isDragging) {
                         isDragging = true
                         dragDownTime = SystemClock.uptimeMillis()
+                        dragStartX = cursorX
+                        dragStartY = cursorY
                         val x = cursorX
                         val y = cursorY
                         val dId = virtualDisplayId
-                        Thread {
-                            rootService?.injectTouch(MotionEvent.ACTION_DOWN, x, y, dId, dragDownTime, dragDownTime)
-                        }.start()
+                        if (rootService != null) {
+                            Thread {
+                                try {
+                                    rootService?.injectTouch(MotionEvent.ACTION_DOWN, x, y, dId, dragDownTime, dragDownTime)
+                                } catch (_: Throwable) {
+                                }
+                            }.start()
+                        }
                     }
                     return true
                 }
@@ -635,11 +724,30 @@ class MainActivity : AppCompatActivity() {
                 isDragging = false
                 val x = cursorX
                 val y = cursorY
+                val sx = dragStartX
+                val sy = dragStartY
                 val dId = virtualDisplayId
                 val down = dragDownTime
                 val up = SystemClock.uptimeMillis()
                 Thread {
-                    rootService?.injectTouch(MotionEvent.ACTION_UP, x, y, dId, down, up)
+                    if (rootService != null) {
+                        try {
+                            rootService?.injectTouch(MotionEvent.ACTION_UP, x, y, dId, down, up)
+                            return@Thread
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    if (isRootShell) {
+                        val moved = kotlin.math.hypot((x - sx).toDouble(), (y - sy).toDouble()) > 10.0
+                        val dur = (up - down).coerceIn(150, 1500)
+                        if (moved) {
+                            Shell.cmd("input -d $dId swipe ${sx.toInt()} ${sy.toInt()} ${x.toInt()} ${y.toInt()} $dur").exec()
+                        } else if (up - down >= 450) {
+                            Shell.cmd("input -d $dId swipe ${x.toInt()} ${y.toInt()} ${x.toInt()} ${y.toInt()} 700").exec()
+                        } else {
+                            Shell.cmd("input -d $dId tap ${x.toInt()} ${y.toInt()}").exec()
+                        }
+                    }
                 }.start()
                 return true
             }
@@ -652,14 +760,17 @@ class MainActivity : AppCompatActivity() {
         cursorX = (cursorX + dx).coerceIn(0f, virtWidth.toFloat())
         cursorY = (cursorY + dy).coerceIn(0f, virtHeight.toFloat())
         updateCursorVisual()
-        if (isDragging) {
+        if (isDragging && rootService != null) {
             val x = cursorX
             val y = cursorY
             val dId = virtualDisplayId
             val down = dragDownTime
             val now = SystemClock.uptimeMillis()
             Thread {
-                rootService?.injectTouch(MotionEvent.ACTION_MOVE, x, y, dId, down, now)
+                try {
+                    rootService?.injectTouch(MotionEvent.ACTION_MOVE, x, y, dId, down, now)
+                } catch (_: Throwable) {
+                }
             }.start()
         }
     }
@@ -667,31 +778,40 @@ class MainActivity : AppCompatActivity() {
     private fun performSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
         val dId = virtualDisplayId
         Thread {
-            val down = SystemClock.uptimeMillis()
-            rootService?.injectTouch(MotionEvent.ACTION_DOWN, x1, y1, dId, down, down)
-            val steps = 8
-            for (i in 1..steps) {
-                Thread.sleep(16)
-                val t = i.toFloat() / steps
-                val x = x1 + (x2 - x1) * t
-                val y = y1 + (y2 - y1) * t
-                rootService?.injectTouch(
-                    MotionEvent.ACTION_MOVE,
-                    x,
-                    y,
-                    dId,
-                    down,
-                    SystemClock.uptimeMillis()
-                )
+            if (rootService != null) {
+                try {
+                    val down = SystemClock.uptimeMillis()
+                    rootService?.injectTouch(MotionEvent.ACTION_DOWN, x1, y1, dId, down, down)
+                    val steps = 8
+                    for (i in 1..steps) {
+                        Thread.sleep(16)
+                        val t = i.toFloat() / steps
+                        val x = x1 + (x2 - x1) * t
+                        val y = y1 + (y2 - y1) * t
+                        rootService?.injectTouch(
+                            MotionEvent.ACTION_MOVE,
+                            x,
+                            y,
+                            dId,
+                            down,
+                            SystemClock.uptimeMillis()
+                        )
+                    }
+                    rootService?.injectTouch(
+                        MotionEvent.ACTION_UP,
+                        x2,
+                        y2,
+                        dId,
+                        down,
+                        SystemClock.uptimeMillis()
+                    )
+                    return@Thread
+                } catch (_: Throwable) {
+                }
             }
-            rootService?.injectTouch(
-                MotionEvent.ACTION_UP,
-                x2,
-                y2,
-                dId,
-                down,
-                SystemClock.uptimeMillis()
-            )
+            if (isRootShell) {
+                Shell.cmd("input -d $dId swipe ${x1.toInt()} ${y1.toInt()} ${x2.toInt()} ${y2.toInt()} 220").exec()
+            }
         }.start()
     }
 
