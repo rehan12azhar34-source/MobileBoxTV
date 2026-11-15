@@ -48,7 +48,7 @@ class RootDisplayService : RootService() {
                 releaseDisplay()
                 if (surface == null) return -1
 
-                val var flags = (1 shl 0) or   // VIRTUAL_DISPLAY_FLAG_PUBLIC
+                var flags = (1 shl 0) or   // VIRTUAL_DISPLAY_FLAG_PUBLIC
                     (1 shl 3) or           // VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
                     (1 shl 6) or           // VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH
                     (1 shl 8)              // VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
@@ -58,12 +58,6 @@ class RootDisplayService : RootService() {
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     flags = flags or (1 shl 11) // OWN_DISPLAY_GROUP (Android 12+)
-                }
-
-                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    baseFlags or (1 shl 11)    // VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP
-                } else {
-                    baseFlags
                 }
 
                 virtualDisplay = try {
