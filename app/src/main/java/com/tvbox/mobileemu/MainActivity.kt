@@ -107,7 +107,6 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#10141C"))
         }
 
-        // Left Sidebar (Controls + App List)
         val sidebar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(24, 24, 16, 24)
@@ -134,10 +133,14 @@ class MainActivity : AppCompatActivity() {
         modeBtn = makeMenuButton("Display: Phone (9:16)") {
             isTabletMode = !isTabletMode
             if (isTabletMode) {
-                virtWidth = 1600; virtHeight = 1000; virtDpi = 240
+                virtWidth = 1600
+                virtHeight = 1000
+                virtDpi = 240
                 modeBtn.text = "Display: Tablet (16:10)"
             } else {
-                virtWidth = 1080; virtHeight = 1920; virtDpi = 420
+                virtWidth = 1080
+                virtHeight = 1920
+                virtDpi = 420
                 modeBtn.text = "Display: Phone (9:16)"
             }
             cursorX = virtWidth / 2f
@@ -183,11 +186,11 @@ class MainActivity : AppCompatActivity() {
         sidebar.addView(vBackBtn)
         sidebar.addView(focusScreenBtn)
         sidebar.addView(appsHeader)
-        sidebar.addView(scrollView, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
+        sidebar.addView(
+            scrollView,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
 
-        // Right Viewport Panel
         val rightStage = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#0B0E14"))
             setPadding(24, 20, 24, 20)
@@ -235,10 +238,13 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        viewportContainer.addView(textureView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
+        viewportContainer.addView(
+            textureView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
         viewportContainer.addView(cursorView, FrameLayout.LayoutParams(28, 28))
 
         hudBanner = TextView(this).apply {
@@ -249,16 +255,22 @@ class MainActivity : AppCompatActivity() {
             setPadding(16, 8, 16, 8)
         }
 
-        rightStage.addView(viewportContainer, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            Gravity.CENTER
-        ))
-        rightStage.addView(hudBanner, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.END
-        ))
+        rightStage.addView(
+            viewportContainer,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
+        )
+        rightStage.addView(
+            hudBanner,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END
+            )
+        )
 
         root.addView(sidebar, sidebarParams)
         root.addView(rightStage, stageParams)
@@ -475,30 +487,44 @@ class MainActivity : AppCompatActivity() {
                         exitScreenControl()
                         return true
                     }
-                    if (isScrollMode) performSwipe(virtWidth * 0.8f, virtHeight * 0.5f, virtWidth * 0.2f, virtHeight * 0.5f)
-                    else moveCursor(-step, 0f)
+                    if (isScrollMode) {
+                        performSwipe(virtWidth * 0.8f, virtHeight * 0.5f, virtWidth * 0.2f, virtHeight * 0.5f)
+                    } else {
+                        moveCursor(-step, 0f)
+                    }
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (isScrollMode) performSwipe(virtWidth * 0.2f, virtHeight * 0.5f, virtWidth * 0.8f, virtHeight * 0.5f)
-                    else moveCursor(step, 0f)
+                    if (isScrollMode) {
+                        performSwipe(virtWidth * 0.2f, virtHeight * 0.5f, virtWidth * 0.8f, virtHeight * 0.5f)
+                    } else {
+                        moveCursor(step, 0f)
+                    }
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
-                    if (isScrollMode) performSwipe(virtWidth * 0.5f, virtHeight * 0.35f, virtWidth * 0.5f, virtHeight * 0.75f)
-                    else moveCursor(0f, -step)
+                    if (isScrollMode) {
+                        performSwipe(virtWidth * 0.5f, virtHeight * 0.35f, virtWidth * 0.5f, virtHeight * 0.75f)
+                    } else {
+                        moveCursor(0f, -step)
+                    }
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (isScrollMode) performSwipe(virtWidth * 0.5f, virtHeight * 0.75f, virtWidth * 0.5f, virtHeight * 0.35f)
-                    else moveCursor(0f, step)
+                    if (isScrollMode) {
+                        performSwipe(virtWidth * 0.5f, virtHeight * 0.75f, virtWidth * 0.5f, virtHeight * 0.35f)
+                    } else {
+                        moveCursor(0f, step)
+                    }
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                     if (event.repeatCount == 0 && !isDragging) {
                         isDragging = true
                         dragDownTime = SystemClock.uptimeMillis()
-                        val x = cursorX; val y = cursorY; val dId = virtualDisplayId
+                        val x = cursorX
+                        val y = cursorY
+                        val dId = virtualDisplayId
                         Thread {
                             rootService?.injectTouch(MotionEvent.ACTION_DOWN, x, y, dId, dragDownTime, dragDownTime)
                         }.start()
@@ -509,8 +535,11 @@ class MainActivity : AppCompatActivity() {
         } else if (event.action == KeyEvent.ACTION_UP) {
             if ((code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER) && isDragging) {
                 isDragging = false
-                val x = cursorX; val y = cursorY; val dId = virtualDisplayId
-                val down = dragDownTime; val up = SystemClock.uptimeMillis()
+                val x = cursorX
+                val y = cursorY
+                val dId = virtualDisplayId
+                val down = dragDownTime
+                val up = SystemClock.uptimeMillis()
                 Thread {
                     rootService?.injectTouch(MotionEvent.ACTION_UP, x, y, dId, down, up)
                 }.start()
@@ -521,13 +550,16 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    private fun moveCursor(dx: Float, dy: Float) {
+   private fun moveCursor(dx: Float, dy: Float) {
         cursorX = (cursorX + dx).coerceIn(0f, virtWidth.toFloat())
         cursorY = (cursorY + dy).coerceIn(0f, virtHeight.toFloat())
         updateCursorVisual()
         if (isDragging) {
-            val x = cursorX; val y = cursorY; val dId = virtualDisplayId
-            val down = dragDownTime; val now = SystemClock.uptimeMillis()
+            val x = cursorX
+            val y = cursorY
+            val dId = virtualDisplayId
+            val down = dragDownTime
+            val now = SystemClock.uptimeMillis()
             Thread {
                 rootService?.injectTouch(MotionEvent.ACTION_MOVE, x, y, dId, down, now)
             }.start()
@@ -545,11 +577,23 @@ class MainActivity : AppCompatActivity() {
                 val t = i.toFloat() / steps
                 val x = x1 + (x2 - x1) * t
                 val y = y1 + (y2 - y1) * t
-                rootService?.injectTouch(MotionEvent.ACTION_MOVE, x, y, dId, down, SystemClock.uptimeMillis())
+                rootService?.injectTouch(
+                    MotionEvent.ACTION_MOVE,
+                    x,
+                    y,
+                    dId,
+                    down,
+                    SystemClock.uptimeMillis()
+                )
             }
-            rootService?.injectTouch(MotionEvent.ACTION_MOVE, x, y, dId, down, SystemClock.uptimeMillis())
-            }
-            rootService?.injectTouch(MotionEvent.ACTION_UP, x2, y2, dId, down, SystemClock.uptimeMillis())
+            rootService?.injectTouch(
+                MotionEvent.ACTION_UP,
+                x2,
+                y2,
+                dId,
+                down,
+                SystemClock.uptimeMillis()
+            )
         }.start()
     }
 
