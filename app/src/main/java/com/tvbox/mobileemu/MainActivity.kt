@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var appListLayout: LinearLayout
     private lateinit var modeBtn: Button
-    private lateinit var scrollBtn: But
+    private lateinit var scrollBtn: Button
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -143,7 +143,6 @@ class MainActivity : AppCompatActivity() {
                 virtDpi = 210
                 modeBtn.text = "Display: Phone (9:16)"
             }
-            
             cursorX = virtWidth / 2f
             cursorY = virtHeight / 2f
             updateViewportAspect()
@@ -466,7 +465,7 @@ class MainActivity : AppCompatActivity() {
 
         val code = event.keyCode
         if (event.action == KeyEvent.ACTION_DOWN) {
-            val step = if (event.repeatCount > 3) 48f else 24f
+            val step = if (event.repeatCount > 3) 32f else 16f
 
             when (code) {
                 KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO -> {
@@ -551,7 +550,7 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-   private fun moveCursor(dx: Float, dy: Float) {
+    private fun moveCursor(dx: Float, dy: Float) {
         cursorX = (cursorX + dx).coerceIn(0f, virtWidth.toFloat())
         cursorY = (cursorY + dy).coerceIn(0f, virtHeight.toFloat())
         updateCursorVisual()
@@ -607,3 +606,4 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 }
+  
