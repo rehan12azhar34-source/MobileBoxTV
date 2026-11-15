@@ -1,5 +1,6 @@
 package com.tvbox.mobileemu
 
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -10,12 +11,15 @@ import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Display
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -51,6 +55,9 @@ class MainActivity : AppCompatActivity() {
     private var rootService: IRootDisplayService? = null
     private var isRootShell = false
     private var localVirtualDisplay: VirtualDisplay? = null
+    private var mediaProjection: MediaProjection? = null
+    private var isProjectionRequested = false
+    private var isPublicDisplay = false
     private var virtualDisplayId: Int = -1
     private var currentSurface: Surface? = null
 
@@ -87,13 +94,38 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) installPickedApk(uri)
     }
 
+    private val projectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val resultData = result.data!!
+            val resultCode = result.resultCode
+            ProjectionService.onForegroundReady = {
+                handler.post {
+                    try {
+                        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        mediaProjection?.stop()
+                        mediaProjection = mpm.getMediaProjection(resultCode, resultData)
+                        createOrResizeVirtualDisplay()
+                    } catch (t: Throwable) {
+                        showError("Projection err: ${t.message}")
+                    }
+                }
+            }
+            startForegroundService(Intent(this, ProjectionService::class.java))
+        } else {
+            showError("Allow screen prompt for Phone Box mode")
+            createOrResizeVirtualDisplay()
+        }
+    }
+
     private val serviceConn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             try {
                 rootService = IRootDisplayService.Stub.asInterface(service)
                 createOrResizeVirtualDisplay()
             } catch (t: Throwable) {
-                showError("Service connected error: ${t.message}")
+                showError("Service error: ${t.message}")
             }
         }
 
@@ -128,13 +160,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStatusReady() {
         val mode = when {
-            rootService != null -> "Root IPC Ready"
-            isRootShell -> "Root Shell Ready"
+            rootService != null -> "Root IPC"
+            isRootShell -> "Root Shell"
             else -> "Waiting Root"
         }
-        statusText.text = if (virtualDisplayId >= 0) "$mode • Display #$virtualDisplayId" else mode
+        val dispType = if (isPublicDisplay) "Public #$virtualDisplayId" else "Private #$virtualDisplayId"
+        statusText.text = if (virtualDisplayId >= 0) "$mode • $dispType" else mode
         statusText.setTextColor(
-            if (rootService != null || isRootShell) Color.parseColor("#6EE7B7")
+            if ((rootService != null || isRootShell) && isPublicDisplay) Color.parseColor("#6EE7B7")
             else Color.parseColor("#FBBF24")
         )
     }
@@ -256,7 +289,11 @@ class MainActivity : AppCompatActivity() {
                     st.setDefaultBufferSize(virtWidth, virtHeight)
                     currentSurface?.release()
                     currentSurface = Surface(st)
-                    createOrResizeVirtualDisplay()
+                    if (mediaProjection != null || rootService != null) {
+                        createOrResizeVirtualDisplay()
+                    } else if (isRootShell) {
+                        requestPublicProjectionOnce()
+                    }
                 }
 
                 override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
@@ -375,7 +412,20 @@ class MainActivity : AppCompatActivity() {
                     return@getShell
                 }
 
-                updateStatusReady()
+                Thread {
+                    Shell.cmd(
+                        "cmd appops set $packageName PROJECT_MEDIA allow 2>/dev/null",
+                        "settings put global force_resizable_activities 1 2>/dev/null",
+                        "settings put global enable_freeform_support 1 2>/dev/null"
+                    ).exec()
+                    handler.post {
+                        updateStatusReady()
+                        if (currentSurface != null && mediaProjection == null && rootService == null) {
+                            requestPublicProjectionOnce()
+                        }
+                    }
+                }.start()
+
                 try {
                     val intent = Intent(this, RootDisplayService::class.java)
                     RootService.bind(intent, serviceConn)
@@ -387,9 +437,61 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestPublicProjectionOnce() {
+        if (isProjectionRequested || mediaProjection != null) return
+        isProjectionRequested = true
+        try {
+            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projectionLauncher.launch(mpm.createScreenCaptureIntent())
+        } catch (t: Throwable) {
+            createOrResizeVirtualDisplay()
+        }
+    }
+
     private fun createOrResizeVirtualDisplay() {
         val surf = currentSurface ?: return
         val svc = rootService
+        val proj = mediaProjection
+
+        if (proj != null) {
+            val existing = localVirtualDisplay
+            if (existing != null) {
+                try {
+                    existing.resize(virtWidth, virtHeight, virtDpi)
+                    existing.surface = surf
+                    virtualDisplayId = existing.display.displayId
+                    isPublicDisplay = (existing.display.flags and Display.FLAG_PRIVATE) == 0
+                    updateStatusReady()
+                    return
+                } catch (_: Throwable) {
+                    releaseLocalDisplay()
+                }
+            }
+
+            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+            try {
+                val vd = proj.createVirtualDisplay(
+                    "MobileBoxTV",
+                    virtWidth,
+                    virtHeight,
+                    virtDpi,
+                    flags,
+                    surf,
+                    null,
+                    null
+                )
+                if (vd != null) {
+                    localVirtualDisplay = vd
+                    virtualDisplayId = vd.display.displayId
+                    isPublicDisplay = (vd.display.flags and Display.FLAG_PRIVATE) == 0
+                    updateStatusReady()
+                    return
+                }
+            } catch (t: Throwable) {
+                showError("Proj VD err: ${t.message}")
+            }
+        }
 
         Thread {
             var id = -1
@@ -405,6 +507,7 @@ class MainActivity : AppCompatActivity() {
                 handler.post {
                     releaseLocalDisplay()
                     virtualDisplayId = id
+                    isPublicDisplay = true
                     updateStatusReady()
                 }
             } else {
@@ -442,6 +545,7 @@ class MainActivity : AppCompatActivity() {
                 val vd = dm.createVirtualDisplay("MobileBoxTV", virtWidth, virtHeight, virtDpi, surf, f)
                 if (vd != null) {
                     localVirtualDisplay = vd
+                    isPublicDisplay = (vd.display.flags and Display.FLAG_PRIVATE) == 0
                     return vd.display.displayId
                 }
             } catch (_: Throwable) {
@@ -489,6 +593,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchAppCompat(pkg: String, dId: Int) {
+        if (isRootShell) {
+            Shell.cmd("am force-stop $pkg").exec()
+            grantPermissionsViaShell(pkg)
+            val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+            val component = launchIntent?.component
+            val res = if (component != null) {
+                Shell.cmd(
+                    "am start --display $dId --windowingMode 1 " +
+                        "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
+                        "-f 0x10008000 -n ${component.flattenToString()} " +
+                        "|| am start --display $dId -a android.intent.action.MAIN " +
+                        "-c android.intent.category.LAUNCHER -f 0x10008000 -n ${component.flattenToString()}"
+                ).exec()
+            } else {
+                Shell.cmd("monkey -p $pkg -c android.intent.category.LAUNCHER 1").exec()
+            }
+            val msg = (res.out + res.err).joinToString(" ").trim()
+            if (msg.contains("Warning", ignoreCase = true) || msg.contains("Error", ignoreCase = true) || !res.isSuccess) {
+                handler.post { hudBanner.text = "Launch: $msg" }
+            }
+            return
+        }
+
         val svc = rootService
         if (svc != null) {
             try {
@@ -497,26 +624,7 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Throwable) {
             }
         }
-        if (!isRootShell) {
-            handler.post { showError("Need Root to launch on Display #$dId") }
-            return
-        }
-        grantPermissionsViaShell(pkg)
-        val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
-        val component = launchIntent?.component
-        val res = if (component != null) {
-            Shell.cmd(
-                "am start --display $dId -a android.intent.action.MAIN " +
-                    "-c android.intent.category.LAUNCHER " +
-                    "-f 0x10200000 -n ${component.flattenToString()}"
-            ).exec()
-        } else {
-            Shell.cmd("monkey -p $pkg -c android.intent.category.LAUNCHER 1").exec()
-        }
-        if (!res.isSuccess) {
-            val err = (res.out + res.err).joinToString(" ")
-            handler.post { showError("Launch: $err") }
-        }
+        handler.post { showError("Need Root to launch on Display #$dId") }
     }
 
     private fun grantPermissionsViaShell(pkg: String) {
@@ -818,6 +926,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         try {
             releaseLocalDisplay()
+            mediaProjection?.stop()
+            stopService(Intent(this, ProjectionService::class.java))
             rootService?.releaseDisplay()
             unbindService(serviceConn)
         } catch (_: Throwable) {
