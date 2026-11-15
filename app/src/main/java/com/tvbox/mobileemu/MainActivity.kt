@@ -54,12 +54,12 @@ class MainActivity : AppCompatActivity() {
     private var isScreenFocused = false
     private var lastBackPressMs = 0L
 
-    private var virtWidth = 1080
-    private var virtHeight = 1920
-    private var virtDpi = 420
+    private var virtWidth = 540
+    private var virtHeight = 960
+    private var virtDpi = 210
 
-    private var cursorX = 540f
-    private var cursorY = 960f
+    private var cursorX = 270f
+    private var cursorY = 480f
     private var isDragging = false
     private var dragDownTime = 0L
 
@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var appListLayout: LinearLayout
     private lateinit var modeBtn: Button
-    private lateinit var scrollBtn: Button
+    private lateinit var scrollBtn: But
 
     private val handler = Handler(Looper.getMainLooper())
 
