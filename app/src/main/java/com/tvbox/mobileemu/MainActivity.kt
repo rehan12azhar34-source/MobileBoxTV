@@ -133,16 +133,17 @@ class MainActivity : AppCompatActivity() {
         modeBtn = makeMenuButton("Display: Phone (9:16)") {
             isTabletMode = !isTabletMode
             if (isTabletMode) {
-                virtWidth = 1600
-                virtHeight = 1000
-                virtDpi = 240
+                virtWidth = 1024
+                virtHeight = 640
+                virtDpi = 160
                 modeBtn.text = "Display: Tablet (16:10)"
             } else {
-                virtWidth = 1080
-                virtHeight = 1920
-                virtDpi = 420
+                virtWidth = 540
+                virtHeight = 960
+                virtDpi = 210
                 modeBtn.text = "Display: Phone (9:16)"
             }
+            
             cursorX = virtWidth / 2f
             cursorY = virtHeight / 2f
             updateViewportAspect()
