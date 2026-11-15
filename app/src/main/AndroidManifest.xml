@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <uses-feature
         android:name="android.software.leanback"
@@ -15,6 +17,11 @@
         android:allowBackup="true"
         android:label="MobileBox TV"
         android:theme="@style/Theme.AppCompat.NoActionBar">
+
+        <service
+            android:name=".ProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <activity
             android:name=".MainActivity"
