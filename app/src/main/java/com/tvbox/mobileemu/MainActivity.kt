@@ -1,12 +1,15 @@
 package com.tvbox.mobileemu
 
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -46,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var rootService: IRootDisplayService? = null
+    private var localVirtualDisplay: VirtualDisplay? = null
     private var virtualDisplayId: Int = -1
     private var currentSurface: Surface? = null
 
@@ -82,23 +86,43 @@ class MainActivity : AppCompatActivity() {
 
     private val serviceConn = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            rootService = IRootDisplayService.Stub.asInterface(service)
-            statusText.text = "Root Ready"
-            createOrResizeVirtualDisplay()
+            try {
+                rootService = IRootDisplayService.Stub.asInterface(service)
+                statusText.text = "Root Ready"
+                createOrResizeVirtualDisplay()
+            } catch (t: Throwable) {
+                showError("Service connected error: ${t.message}")
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             rootService = null
             virtualDisplayId = -1
-            statusText.text = "Root Disconnected"
+            handler.post { statusText.text = "Root Disconnected" }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+            handler.post {
+                showError("Error: ${throwable.javaClass.simpleName}: ${throwable.message}")
+            }
+        }
+
         buildUi()
         bindRootDaemon()
         refreshInstalledApps()
+    }
+
+    private fun showError(msg: String) {
+        try {
+            statusText.text = msg
+            statusText.setTextColor(Color.parseColor("#F87171"))
+            hudBanner.text = msg
+        } catch (_: Throwable) {
+        }
     }
 
     private fun buildUi() {
@@ -127,7 +151,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         val installBtn = makeMenuButton("+ Install APK") {
-            apkPicker.launch(arrayOf("application/vnd.android.package-archive", "*/*"))
+            try {
+                apkPicker.launch(arrayOf("application/vnd.android.package-archive", "*/*"))
+            } catch (t: Throwable) {
+                showError("Picker error: ${t.message}")
+            }
         }
 
         modeBtn = makeMenuButton("Display: Phone (9:16)") {
@@ -155,7 +183,12 @@ class MainActivity : AppCompatActivity() {
 
         val vBackBtn = makeMenuButton("Send Mobile Back") {
             if (virtualDisplayId >= 0) {
-                Thread { rootService?.injectBackKey(virtualDisplayId) }.start()
+                Thread {
+                    try {
+                        rootService?.injectBackKey(virtualDisplayId)
+                    } catch (_: Throwable) {
+                    }
+                }.start()
             }
         }
 
@@ -321,31 +354,91 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindRootDaemon() {
-        Shell.getShell { shell ->
-            if (!shell.isRoot) {
-                statusText.text = "Root Denied! Grant su permission."
-                statusText.setTextColor(Color.parseColor("#F87171"))
-                return@getShell
+        try {
+            Shell.getShell { shell ->
+                if (!shell.isRoot) {
+                    showError("Root Denied! Grant su permission.")
+                    return@getShell
+                }
+                try {
+                    val intent = Intent(this, RootDisplayService::class.java)
+                    RootService.bind(intent, serviceConn)
+                } catch (t: Throwable) {
+                    showError("RootService bind error: ${t.message}")
+                }
             }
-            val intent = Intent(this, RootDisplayService::class.java)
-            RootService.bind(intent, serviceConn)
+        } catch (t: Throwable) {
+            showError("Shell error: ${t.message}")
         }
     }
 
     private fun createOrResizeVirtualDisplay() {
-        val svc = rootService ?: return
         val surf = currentSurface ?: return
+        val svc = rootService
+
         Thread {
-            val id = svc.createVirtualDisplay(surf, virtWidth, virtHeight, virtDpi)
-            handler.post {
-                virtualDisplayId = id
-                if (id >= 0) {
+            var id = -1
+            if (svc != null) {
+                try {
+                    id = svc.createVirtualDisplay(surf, virtWidth, virtHeight, virtDpi)
+                } catch (_: Throwable) {
+                    id = -1
+                }
+            }
+
+            if (id >= 0) {
+                handler.post {
+                    releaseLocalDisplay()
+                    virtualDisplayId = id
                     statusText.text = "Root Ready • Display #$id"
-                } else {
-                    statusText.text = "Failed creating VirtualDisplay"
+                    statusText.setTextColor(Color.parseColor("#6EE7B7"))
+                }
+            } else {
+                handler.post {
+                    val localId = createLocalVirtualDisplay(surf)
+                    virtualDisplayId = localId
+                    if (localId >= 0) {
+                        statusText.text = if (svc != null) {
+                            "Root Ready • Local Display #$localId"
+                        } else {
+                            "Waiting Root • Display #$localId"
+                        }
+                        statusText.setTextColor(Color.parseColor("#6EE7B7"))
+                    } else {
+                        showError("Failed creating VirtualDisplay")
+                    }
                 }
             }
         }.start()
+    }
+
+    private fun releaseLocalDisplay() {
+        try {
+            localVirtualDisplay?.release()
+        } catch (_: Throwable) {
+        }
+        localVirtualDisplay = null
+    }
+
+    private fun createLocalVirtualDisplay(surf: Surface): Int {
+        releaseLocalDisplay()
+        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        val flagSets = intArrayOf(
+            (1 shl 0) or (1 shl 3) or (1 shl 6) or (1 shl 8),
+            (1 shl 0) or (1 shl 3),
+            (1 shl 3)
+        )
+        for (f in flagSets) {
+            try {
+                val vd = dm.createVirtualDisplay("MobileBoxTV", virtWidth, virtHeight, virtDpi, surf, f)
+                if (vd != null) {
+                    localVirtualDisplay = vd
+                    return vd.display.displayId
+                }
+            } catch (_: Throwable) {
+            }
+        }
+        return -1
     }
 
     private fun refreshInstalledApps() {
@@ -377,8 +470,13 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Display not ready yet", Toast.LENGTH_SHORT).show()
                     return@makeMenuButton
                 }
+                val dId = virtualDisplayId
                 Thread {
-                    rootService?.launchAppOnDisplay(app.packageName, virtualDisplayId)
+                    try {
+                        rootService?.launchAppOnDisplay(app.packageName, dId)
+                    } catch (t: Throwable) {
+                        handler.post { showError("Launch error: ${t.message}") }
+                    }
                 }.start()
                 enterScreenControl()
             })
@@ -401,9 +499,9 @@ class MainActivity : AppCompatActivity() {
                     statusText.text = if (result.startsWith("OK")) "APK Installed!" else result
                     refreshInstalledApps()
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 handler.post {
-                    statusText.text = "Install error: ${e.message}"
+                    showError("Install error: ${e.message}")
                 }
             }
         }.start()
@@ -599,6 +697,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         try {
+            releaseLocalDisplay()
             rootService?.releaseDisplay()
             unbindService(serviceConn)
         } catch (_: Throwable) {
@@ -606,4 +705,3 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 }
-  
