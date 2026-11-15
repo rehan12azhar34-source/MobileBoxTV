@@ -34,5 +34,5 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.github.topjohnwu.libsu:core:6.0.0")
     implementation("com.github.topjohnwu.libsu:service:6.0.0")
-    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
 }
