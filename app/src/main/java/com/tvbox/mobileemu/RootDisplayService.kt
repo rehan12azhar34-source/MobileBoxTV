@@ -65,11 +65,19 @@ class RootDisplayService : RootService() {
                     val dm = sysCtx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
                     dm.createVirtualDisplay("MobileBoxTV", width, height, dpi, surface, flags)
                 } catch (_: Throwable) {
-                    val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-                    dm.createVirtualDisplay("MobileBoxTV", width, height, dpi, surface, flags)
+                    try {
+                        val dm = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+                        dm.createVirtualDisplay("MobileBoxTV", width, height, dpi, surface, flags)
+                    } catch (_: Throwable) {
+                        null
+                    }
                 }
 
-                return virtualDisplay?.display?.displayId ?: -1
+                return try {
+                    virtualDisplay?.display?.displayId ?: -1
+                } catch (_: Throwable) {
+                    -1
+                }
             }
 
             override fun releaseDisplay() {
@@ -81,17 +89,20 @@ class RootDisplayService : RootService() {
             }
 
             override fun launchAppOnDisplay(packageName: String, displayId: Int) {
-                grantCommonPermissions(packageName)
-                val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-                val component = launchIntent?.component
-                if (component != null) {
-                    Shell.cmd(
-                        "am start --display $displayId -a android.intent.action.MAIN " +
-                            "-c android.intent.category.LAUNCHER " +
-                            "-f 0x10200000 -n ${component.flattenToString()}"
-                    ).exec()
-                } else {
-                    Shell.cmd("monkey -p $packageName -c android.intent.category.LAUNCHER 1").exec()
+                try {
+                    grantCommonPermissions(packageName)
+                    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+                    val component = launchIntent?.component
+                    if (component != null) {
+                        Shell.cmd(
+                            "am start --display $displayId -a android.intent.action.MAIN " +
+                                "-c android.intent.category.LAUNCHER " +
+                                "-f 0x10200000 -n ${component.flattenToString()}"
+                        ).exec()
+                    } else {
+                        Shell.cmd("monkey -p $packageName -c android.intent.category.LAUNCHER 1").exec()
+                    }
+                } catch (_: Throwable) {
                 }
             }
 
@@ -103,28 +114,38 @@ class RootDisplayService : RootService() {
                 downTime: Long,
                 eventTime: Long
             ) {
-                val event = MotionEvent.obtain(downTime, eventTime, action, x, y, 0)
-                event.source = InputDevice.SOURCE_TOUCHSCREEN
-                injectEventToDisplay(event, displayId)
-                event.recycle()
+                try {
+                    val event = MotionEvent.obtain(downTime, eventTime, action, x, y, 0)
+                    event.source = InputDevice.SOURCE_TOUCHSCREEN
+                    injectEventToDisplay(event, displayId)
+                    event.recycle()
+                } catch (_: Throwable) {
+                }
             }
 
             override fun injectBackKey(displayId: Int) {
-                val now = android.os.SystemClock.uptimeMillis()
-                val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0)
-                val up = KeyEvent(now, now + 20, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0)
-                injectEventToDisplay(down, displayId)
-                injectEventToDisplay(up, displayId)
+                try {
+                    val now = android.os.SystemClock.uptimeMillis()
+                    val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0)
+                    val up = KeyEvent(now, now + 20, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0)
+                    injectEventToDisplay(down, displayId)
+                    injectEventToDisplay(up, displayId)
+                } catch (_: Throwable) {
+                }
             }
 
             override fun installApkAndGrant(apkPath: String): String {
-                val safePath = apkPath.replace("\"", "\\\"")
-                val res = Shell.cmd(
-                    "pm install -r -g --bypass-low-target-sdk-block \"$safePath\" " +
-                        "|| pm install -r -g \"$safePath\""
-                ).exec()
-                val out = (res.out + res.err).joinToString("\n").trim()
-                return if (res.isSuccess) "OK: $out" else "ERR: $out"
+                return try {
+                    val safePath = apkPath.replace("\"", "\\\"")
+                    val res = Shell.cmd(
+                        "pm install -r -g --bypass-low-target-sdk-block \"$safePath\" " +
+                            "|| pm install -r -g \"$safePath\""
+                    ).exec()
+                    val out = (res.out + res.err).joinToString("\n").trim()
+                    if (res.isSuccess) "OK: $out" else "ERR: $out"
+                } catch (t: Throwable) {
+                    "ERR: ${t.message}"
+                }
             }
         }
     }
